@@ -18,41 +18,26 @@ library(latex2exp)
 ui <- fluidPage(
    
    # Application title
-   titlePanel("Sensitivity to invisible deaths"),
+   titlePanel("Sensitivity: scale-up estimator"),
    
    # Sidebar with a slider input for number of bins 
    sidebarLayout(
       sidebarPanel(
-         sliderInput("m_v",
-                     "Visible death rate (per 1,000):",
-                     min = 1,
-                     max = 100,
-                     step = 1,
-                     value = 10),
-         sliderInput("K",
-                     "Focal factor for invisible death rate (1 = same as visible):",
-                     min = 0,
-                     max = 5,
-                     step = .01,
-                     value = 1),
-         sliderInput("p_i",
-                     "Focal fraction of deaths that is invisible:",
-                     min = 0,
-                     max = 1,
-                     step = .01,
-                     value = .2),
-         sliderInput("scale_K",
-                     "K scale factor:",
+         numericInput("estimate",
+                      "point estimate:",
+                      value=10000),
+         sliderInput("delta",
+                     "delta:",
                      min = .1,
-                     max = 1,
+                     max = 2,
                      step = .01,
-                     value = .25),
-         sliderInput("scale_p",
-                     "p scale factor:",
-                     min = .1,
-                     max = 1,
+                     value = c(.8, 1.2)),
+         sliderInput("eta.over.tau",
+                     "eta/tau:",
+                     min = 0,
+                     max = 1.1,
                      step = .01,
-                     value = .5),
+                     value = c(.8, 1.02)),
          actionButton(inputId='go',
                        label='Recalculate')
       ),
@@ -61,7 +46,7 @@ ui <- fluidPage(
         tabsetPanel(type="tabs",
            tabPanel("Surface",
                     #plotOutput("m_plot"),
-                    plotOutput("p_k_relerr_plot"),
+                    plotOutput("adjusted_plot"),
                     downloadButton("downloadPlot", "Download plot")),
            tabPanel("Raw data",
                     dataTableOutput("tab"))
@@ -70,98 +55,69 @@ ui <- fluidPage(
    )
 )
 
+adjust_estimate <- function(estimate,
+                            eta.over.tau,
+                            delta) {
+  return((estimate * eta.over.tau) / (delta))
+}
+
 # Define server logic required to draw a histogram
 server <- function(input, output) {
   
-  
-  # calculate the harmonic mean of death rates m1 and m2,
-  # with p1 the fraction of deaths in group 1
-  h_mean <- function(m1, m2, p1) {
-    return(1 / ((p1/m1) + ((1-p1)/m2)))
-  }
-  
-  # expression
-  agg_factor <- function(K, p) {
-    return(K / (p + K*(1-p)))
-  }
-  
-  # return the factor by which the visible dr gets multiplied in
-  # the lower bound
-  lb_factor <- function(K, p) {
-    if (K <= 1) { return(1) }
-    return(1 / sqrt((p/K) + (1-p)))
-  }
-  
-  # return the factor by which the visible dr gets multiplied in
-  # the upper bound
-  ub_factor <- function(K, p) {
-    return(K^p)
-  }
-  
+  # TODO - LEFT OFF HERE: figuring out how to adapt sensitivity analysis
+  #   surface
+  # maybe axis should be reporting vs structural factors or something?
+  #
+  #   - errors in known popns
+  #   - reporting errors
+  #   - structural differences
   
   surfacedata <- eventReactive(input$go, {
     
     m_grid <- 100
     
-    p.vals <- seq(from=(1-input$scale_p)*input$p_i, 
-                  to=(1+input$scale_p)*input$p_i, 
-                  length.out=m_grid)
+    eta.over.tau.vals <- seq(from=input$eta.over.tau[1], 
+                             to=input$eta.over.tau[2], 
+                             length.out=m_grid)
     
-    K.vals <- seq(from=(1-input$scale_K)*input$K, 
-                  to=(1+input$scale_K)*input$K, 
-                  length.out=m_grid)
+    delta.vals <- seq(from=input$delta[1],
+                      to=input$delta[2],
+                      length.out=m_grid)
 
-    toplot <- expand.grid(p_i = p.vals,
-                          K = K.vals)
+    toplot <- expand.grid(eta.over.tau = eta.over.tau.vals,
+                          delta = delta.vals)
     
-    toplot$m_v <- input$m_v
+    toplot$estimate <- input$estimate
     
-    toplot$m_i <- toplot$m_v * toplot$K
+    toplot$adj.est <- pmap_dbl(list(estimate=toplot$estimate, 
+                                    eta.over.tau=toplot$eta.over.tau, 
+                                    delta=toplot$delta),
+                               adjust_estimate)
     
-    toplot$ub_factor <- map2_dbl(toplot$K,
-                                 toplot$p_i,
-                                 ~ ub_factor(K=.x, p=.y))
-    toplot$m_upper <- toplot$m_v * toplot$ub_factor
-    
-    toplot$lb_factor <- map2_dbl(toplot$K,
-                                 toplot$p_i,
-                                 ~ lb_factor(K=.x, p=.y))
-    toplot$m_lower <- toplot$m_v * toplot$lb_factor
-    
-    toplot$agg_factor <- map2_dbl(toplot$K,
-                                  toplot$p_i,
-                                  ~ agg_factor(K=.x, p=.y))
-    toplot$m_agg <- toplot$m_v * toplot$agg_factor
-    
-    toplot$m <- pmap_dbl(list(m1=toplot$m_i, 
-                              m2=toplot$m_v, 
-                              p1=toplot$p_i),
-                         h_mean)
-    toplot$m_v_relerr <- (toplot$m_v - toplot$m) / toplot$m
-    toplot$m_v_relerr_pct <- 100*toplot$m_v_relerr
+    #toplot$m_v_relerr <- (toplot$m_v - toplot$m) / toplot$m
+    #toplot$m_v_relerr_pct <- 100*toplot$m_v_relerr
     
     return(toplot)
   })
   
-  relerr_plot <- reactive({
-       ggplot(surfacedata(), aes(x=p_i, y=K, z = m_v_relerr_pct)) +
-       geom_raster(aes(fill=m_v_relerr_pct)) +
-       #geom_contour(bindwidth=.01, color='white') +
-       geom_contour(color='white', binwidth=1) +
+  adjusted_plot <- reactive({
+       ggplot(surfacedata(), aes(x=eta.over.tau, y=delta, z = adj.est)) +
+       geom_raster(aes(fill=adj.est)) +
+       #geom_contour(color='white', binwidth=1) +
+       geom_contour(color='white') +
        theme_minimal() +
        scale_fill_gradient2(low=scales::muted("red"), high=scales::muted("blue"),
-                            name="% Rel. Err.") +
-       scale_x_continuous(labels=scales::percent) +
-       xlab(expression(p[D[alpha]]^V))
+                            name="Adjusted\nestimate",
+                            labels = scales::comma) +
+       xlab(expression(paste("Reporting adjustment factor (", eta/tau, ")"))) +
+       ylab(expression(paste("Degree ratio adjustment factor (", delta, ")"))) 
        #ggtitle(TeX("% Relative error in using $M^V$ to estimate $M$"))
        #theme(legend.position='bottom') +
   })
   
-   output$p_k_relerr_plot <- renderPlot({
-     p <- relerr_plot()
+   output$adjusted_plot <- renderPlot({
+     p <- adjusted_plot()
      return(p)
-     #p1 <- direct.label(p, list('bottom.pieces', color='black'))
-     #return(p1)
    })
    
    output$tab <- renderDataTable(surfacedata())
