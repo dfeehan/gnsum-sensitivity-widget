@@ -8,11 +8,11 @@
 #
 
 library(shiny)
-library(ggplot2)
-library(numDeriv)
-library(purrr)
-library(directlabels)
-library(latex2exp)
+library(tidyverse)
+#library(ggplot2)
+#library(numDeriv)
+#library(purrr)
+#library(latex2exp)
 
 # Define UI for application that draws a histogram
 ui <- fluidPage(
